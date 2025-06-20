@@ -1,409 +1,436 @@
 "use client"
 
-import React from "react"
 import { useState, useEffect } from "react"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Loader2, Check, Star, Shield, Users, Zap, Crown, Phone, Mail, CreditCard } from "lucide-react"
+import { Crown, Check, Send, Copy, CheckCircle, Loader2, AlertTriangle, RefreshCw, Phone } from "lucide-react"
 import {
   SUBSCRIPTION_PLANS,
-  createMTNPayment,
-  checkMTNPaymentStatus,
-  activateSubscription,
-  type MTNSubscriptionPlan,
-} from "@/lib/mtn-api"
+  AEROHEALTH_MOMO,
+  MTNMoMoAPI,
+  saveSubscription,
+  storePendingPayment,
+  getPendingPayment,
+  clearPendingPayment,
+} from "@/lib/mtn-momo-api"
+import { toast } from "@/hooks/use-toast"
 
 interface SubscriptionModalProps {
-  open: boolean
-  onOpenChange: (open: boolean) => void
+  isOpen: boolean
+  onClose: () => void
+  onSuccess: () => void
 }
 
-export function SubscriptionModal({ open, onOpenChange }: SubscriptionModalProps) {
-  const [selectedPlan, setSelectedPlan] = useState<MTNSubscriptionPlan | null>(null)
-  const [phoneNumber, setPhoneNumber] = useState("")
-  const [email, setEmail] = useState("")
+export function SubscriptionModal({ isOpen, onClose, onSuccess }: SubscriptionModalProps) {
+  const [selectedPlan, setSelectedPlan] = useState(SUBSCRIPTION_PLANS[1]) // Default to premium
+  const [senderPhone, setSenderPhone] = useState("")
   const [isProcessing, setIsProcessing] = useState(false)
-  const [transactionId, setTransactionId] = useState<string | null>(null)
-  const [paymentStatus, setPaymentStatus] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [step, setStep] = useState<"plans" | "payment" | "processing" | "success">("plans")
+  const [paymentStep, setPaymentStep] = useState<"select" | "transfer" | "verification" | "success">("select")
+  const [reference, setReference] = useState("")
+  const [verificationAttempts, setVerificationAttempts] = useState(0)
+  const [copiedNumber, setCopiedNumber] = useState(false)
+  const [copiedReference, setCopiedReference] = useState(false)
 
-  const handleSubscribe = async () => {
-    if (!selectedPlan || !phoneNumber || !email) {
-      setError("Please fill in all required fields")
+  const momoAPI = new MTNMoMoAPI()
+
+  useEffect(() => {
+    // Check for pending payment on modal open
+    if (isOpen) {
+      const pending = getPendingPayment()
+      if (pending) {
+        const plan = SUBSCRIPTION_PLANS.find((p) => p.id === pending.planId)
+        if (plan) {
+          setSelectedPlan(plan)
+          setReference(pending.reference)
+          setSenderPhone(pending.senderPhone)
+          setPaymentStep("verification")
+        }
+      }
+    }
+  }, [isOpen])
+
+  const handlePlanSelect = (planId: string) => {
+    const plan = SUBSCRIPTION_PLANS.find((p) => p.id === planId)
+    if (plan) {
+      setSelectedPlan(plan)
+    }
+  }
+
+  const handleInitiateTransfer = () => {
+    if (!senderPhone.trim()) {
+      toast({
+        title: "Phone Number Required",
+        description: "Please enter your MTN phone number.",
+        variant: "destructive",
+      })
       return
     }
 
-    setIsProcessing(true)
-    setError(null)
-    setStep("processing")
+    if (!momoAPI.validateGhanaPhone(senderPhone)) {
+      toast({
+        title: "Invalid Phone Number",
+        description: "Please enter a valid Ghana phone number (e.g., 0244123456 or 233244123456).",
+        variant: "destructive",
+      })
+      return
+    }
 
+    // Generate unique reference
+    const newReference = momoAPI.generateReference(selectedPlan.id)
+    setReference(newReference)
+
+    // Store pending payment
+    storePendingPayment(newReference, selectedPlan.id, selectedPlan.price, senderPhone)
+
+    setPaymentStep("transfer")
+  }
+
+  const copyToClipboard = async (text: string, type: "number" | "reference") => {
     try {
-      const result = await createMTNPayment(phoneNumber, selectedPlan.id, email)
-
-      if (result.success && result.transactionId) {
-        setTransactionId(result.transactionId)
-        // Start polling for payment status
-        pollPaymentStatus(result.transactionId)
+      await navigator.clipboard.writeText(text)
+      if (type === "number") {
+        setCopiedNumber(true)
+        setTimeout(() => setCopiedNumber(false), 2000)
       } else {
-        setError(result.error || "Payment initiation failed")
-        setIsProcessing(false)
-        setStep("payment")
+        setCopiedReference(true)
+        setTimeout(() => setCopiedReference(false), 2000)
       }
-    } catch (err) {
-      setError("An unexpected error occurred")
-      setIsProcessing(false)
-      setStep("payment")
+      toast({
+        title: "Copied!",
+        description: `${type === "number" ? "Phone number" : "Reference"} copied to clipboard.`,
+      })
+    } catch (error) {
+      toast({
+        title: "Copy Failed",
+        description: "Please copy manually.",
+        variant: "destructive",
+      })
     }
   }
 
-  const pollPaymentStatus = async (txId: string) => {
-    const maxAttempts = 60 // 10 minutes with 10-second intervals
-    let attempts = 0
+  const handleVerifyPayment = async () => {
+    setIsProcessing(true)
+    setVerificationAttempts((prev) => prev + 1)
 
-    const poll = async () => {
-      attempts++
+    try {
+      const transferResult = await momoAPI.checkReceivedTransfer(reference, selectedPlan.price)
 
-      try {
-        const result = await checkMTNPaymentStatus(txId)
+      if (transferResult && transferResult.status === "SUCCESSFUL") {
+        // Save subscription
+        saveSubscription(selectedPlan.id, 1, transferResult.transactionId)
 
-        if (result.success && result.status) {
-          setPaymentStatus(result.status)
+        // Clear pending payment
+        clearPendingPayment()
 
-          if (result.status === "successful") {
-            // Activate subscription
-            if (selectedPlan) {
-              activateSubscription(selectedPlan.id, email)
-            }
-            setIsProcessing(false)
-            setStep("success")
-            setTimeout(() => {
-              onOpenChange(false)
-              // Refresh page to show subscription features
-              window.location.reload()
-            }, 5000)
-            return
-          }
+        toast({
+          title: "Payment Verified!",
+          description: `Your ${selectedPlan.name} subscription is now active!`,
+        })
 
-          if (result.status === "failed") {
-            setError("Payment failed. Please try again with a different number or check your MTN Mobile Money balance.")
-            setIsProcessing(false)
-            setStep("payment")
-            return
-          }
-        }
-
-        if (attempts < maxAttempts) {
-          setTimeout(poll, 10000) // Poll every 10 seconds
-        } else {
-          setError("Payment verification timed out. Please check your MTN Mobile Money transaction history.")
-          setIsProcessing(false)
-          setStep("payment")
-        }
-      } catch (err) {
-        if (attempts < maxAttempts) {
-          setTimeout(poll, 10000)
-        } else {
-          setError("Unable to verify payment status. Please contact support.")
-          setIsProcessing(false)
-          setStep("payment")
-        }
+        setPaymentStep("success")
+        setTimeout(() => {
+          onSuccess()
+          onClose()
+          resetModal()
+        }, 2000)
+      } else {
+        toast({
+          title: "Payment Not Found",
+          description:
+            verificationAttempts >= 3
+              ? "Payment not received yet. Please ensure you've sent the exact amount with the reference."
+              : "Payment not received yet. Please try again in a moment.",
+          variant: "destructive",
+        })
       }
+    } catch (error) {
+      toast({
+        title: "Verification Error",
+        description: "Failed to verify payment. Please try again.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsProcessing(false)
     }
-
-    poll()
   }
 
   const resetModal = () => {
-    setSelectedPlan(null)
-    setPhoneNumber("")
-    setEmail("")
+    setPaymentStep("select")
+    setSenderPhone("")
+    setReference("")
     setIsProcessing(false)
-    setTransactionId(null)
-    setPaymentStatus(null)
-    setError(null)
-    setStep("plans")
+    setVerificationAttempts(0)
+    setCopiedNumber(false)
+    setCopiedReference(false)
+    clearPendingPayment()
   }
 
-  useEffect(() => {
-    if (!open) {
+  const handleClose = () => {
+    onClose()
+    // Don't reset if we're in verification step (keep pending payment)
+    if (paymentStep !== "verification") {
       resetModal()
     }
-  }, [open])
-
-  const getPlanIcon = (planId: string) => {
-    switch (planId) {
-      case "basic_ghana":
-        return Shield
-      case "premium_ghana":
-        return Star
-      case "family_ghana":
-        return Users
-      default:
-        return Zap
-    }
-  }
-
-  const formatPhoneNumber = (value: string) => {
-    // Remove all non-digits
-    const cleaned = value.replace(/\D/g, "")
-
-    // Format as Ghana number
-    if (cleaned.length <= 3) return cleaned
-    if (cleaned.length <= 6) return `${cleaned.slice(0, 3)} ${cleaned.slice(3)}`
-    if (cleaned.length <= 9) return `${cleaned.slice(0, 3)} ${cleaned.slice(3, 6)} ${cleaned.slice(6)}`
-    return `${cleaned.slice(0, 3)} ${cleaned.slice(3, 6)} ${cleaned.slice(6, 10)}`
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
+    <Dialog open={isOpen} onOpenChange={handleClose}>
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Crown className="h-6 w-6 text-yellow-500" />
-            Upgrade to Premium - Ghana
+            <Crown className="h-5 w-5 text-yellow-500" />
+            Subscribe to Ghana Air Quality Maps
           </DialogTitle>
-          <DialogDescription>
-            Choose a subscription plan designed for Ghana's air quality challenges. Pay securely with MTN Mobile Money.
-          </DialogDescription>
+          <DialogDescription>Send money via MTN Mobile Money to activate your subscription</DialogDescription>
         </DialogHeader>
 
-        {step === "plans" && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-6">
-            {SUBSCRIPTION_PLANS.map((plan) => {
-              const Icon = getPlanIcon(plan.id)
-              return (
+        {paymentStep === "select" && (
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {SUBSCRIPTION_PLANS.map((plan) => (
                 <Card
                   key={plan.id}
-                  className={`cursor-pointer transition-all hover:shadow-lg border-2 ${
-                    plan.popular
-                      ? "border-blue-500 bg-blue-50 relative"
-                      : selectedPlan?.id === plan.id
-                        ? "border-green-500 bg-green-50"
-                        : "border-gray-200 hover:border-blue-300"
-                  }`}
-                  onClick={() => {
-                    setSelectedPlan(plan)
-                    setStep("payment")
-                  }}
+                  className={`cursor-pointer transition-all ${
+                    selectedPlan.id === plan.id
+                      ? "ring-2 ring-teal-500 border-teal-300"
+                      : "border-gray-200 hover:border-teal-300"
+                  } ${plan.popular ? "relative" : ""}`}
+                  onClick={() => handlePlanSelect(plan.id)}
                 >
                   {plan.popular && (
                     <div className="absolute -top-3 left-1/2 transform -translate-x-1/2">
-                      <Badge className="bg-blue-500 text-white">Most Popular</Badge>
+                      <Badge className="bg-yellow-500 text-white">Most Popular</Badge>
                     </div>
                   )}
                   <CardHeader className="text-center">
-                    <div className="mx-auto w-16 h-16 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full flex items-center justify-center mb-4">
-                      <Icon className="h-8 w-8 text-white" />
+                    <CardTitle className="text-lg">{plan.name}</CardTitle>
+                    <div className="text-3xl font-bold text-teal-600">
+                      GHS {plan.price}
+                      <span className="text-sm font-normal text-gray-500">/{plan.duration}</span>
                     </div>
-                    <CardTitle className="text-xl">{plan.name}</CardTitle>
-                    <CardDescription className="text-center">
-                      <span className="text-3xl font-bold text-gray-900">GHS {plan.price}</span>
-                      <span className="text-gray-500">/month</span>
-                    </CardDescription>
                   </CardHeader>
                   <CardContent>
-                    <ul className="space-y-3">
+                    <ul className="space-y-2">
                       {plan.features.map((feature, index) => (
-                        <li key={index} className="flex items-start gap-3 text-sm">
-                          <Check className="h-4 w-4 text-green-500 flex-shrink-0 mt-0.5" />
-                          <span>{feature}</span>
+                        <li key={index} className="flex items-center gap-2 text-sm">
+                          <Check className="h-4 w-4 text-green-500" />
+                          {feature}
                         </li>
                       ))}
                     </ul>
-                    <Button
-                      className={`w-full mt-6 ${plan.popular ? "bg-blue-600 hover:bg-blue-700" : ""}`}
-                      variant={plan.popular ? "default" : "outline"}
-                    >
-                      Select {plan.name}
-                    </Button>
                   </CardContent>
                 </Card>
-              )
-            })}
+              ))}
+            </div>
+
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="phone">Your MTN Phone Number</Label>
+                <div className="relative">
+                  <Phone className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                  <Input
+                    id="phone"
+                    type="tel"
+                    placeholder="0244123456 or 233244123456"
+                    value={senderPhone}
+                    onChange={(e) => setSenderPhone(e.target.value)}
+                    className="pl-10 border-teal-200 focus:border-teal-500"
+                  />
+                </div>
+                <p className="text-xs text-gray-500">Enter your MTN Ghana phone number for verification</p>
+              </div>
+
+              <div className="flex justify-between items-center">
+                <div className="text-sm text-gray-600">
+                  Selected: <span className="font-medium">{selectedPlan.name}</span> - GHS {selectedPlan.price}/month
+                </div>
+                <Button onClick={handleInitiateTransfer} className="bg-teal-600 hover:bg-teal-700">
+                  Continue to Payment
+                </Button>
+              </div>
+            </div>
           </div>
         )}
 
-        {step === "payment" && selectedPlan && (
-          <div className="space-y-6 mt-6">
-            {/* Selected Plan Summary */}
-            <Card className="bg-gradient-to-r from-blue-50 to-purple-50 border-blue-200">
+        {paymentStep === "transfer" && (
+          <div className="space-y-6">
+            <Card className="border-orange-200 bg-orange-50">
               <CardHeader>
-                <CardTitle className="flex items-center gap-3">
-                  {React.createElement(getPlanIcon(selectedPlan.id), { className: "h-6 w-6 text-blue-600" })}
-                  <div>
-                    <div className="text-xl">{selectedPlan.name}</div>
-                    <div className="text-sm text-gray-600 font-normal">
-                      GHS {selectedPlan.price}/month • {selectedPlan.duration} days • Ghana-optimized
-                    </div>
-                  </div>
+                <CardTitle className="text-lg text-orange-800 flex items-center gap-2">
+                  <Send className="h-5 w-5" />
+                  Send Money via MTN MoMo
                 </CardTitle>
               </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="text-center">
+                  <p className="text-sm text-orange-700 mb-4">
+                    Send <span className="font-bold text-xl">GHS {selectedPlan.price}</span> to our business number:
+                  </p>
+
+                  <div className="bg-white rounded-lg p-4 border border-orange-200">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm text-gray-600">Send to:</span>
+                      <Badge className="bg-orange-100 text-orange-700">MTN Business</Badge>
+                    </div>
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="text-2xl font-bold text-gray-900">{AEROHEALTH_MOMO.number}</div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => copyToClipboard(AEROHEALTH_MOMO.number, "number")}
+                        className="flex items-center gap-1"
+                      >
+                        {copiedNumber ? <CheckCircle className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                        {copiedNumber ? "Copied" : "Copy"}
+                      </Button>
+                    </div>
+                    <p className="text-sm text-gray-600">{AEROHEALTH_MOMO.name}</p>
+                  </div>
+
+                  <div className="bg-white rounded-lg p-4 border border-orange-200 mt-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm text-gray-600">Reference (Important!):</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div className="text-lg font-mono font-bold text-gray-900 break-all">{reference}</div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => copyToClipboard(reference, "reference")}
+                        className="flex items-center gap-1 ml-2"
+                      >
+                        {copiedReference ? <CheckCircle className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                        {copiedReference ? "Copied" : "Copy"}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+
+                <Alert className="border-orange-200 bg-orange-50">
+                  <AlertTriangle className="h-4 w-4" />
+                  <AlertDescription>
+                    <strong>Important Steps:</strong>
+                    <ol className="list-decimal list-inside mt-2 space-y-1 text-sm">
+                      <li>Dial *170# on your MTN phone</li>
+                      <li>Select "Send Money"</li>
+                      <li>Enter our number: {AEROHEALTH_MOMO.number}</li>
+                      <li>Enter amount: GHS {selectedPlan.price}</li>
+                      <li>Add reference: {reference}</li>
+                      <li>Confirm with your MoMo PIN</li>
+                    </ol>
+                  </AlertDescription>
+                </Alert>
+              </CardContent>
             </Card>
 
-            {/* Payment Form */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              <div className="space-y-6">
-                <div>
-                  <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                    <CreditCard className="h-5 w-5" />
-                    Payment Information
-                  </h3>
+            <div className="flex gap-3">
+              <Button variant="outline" onClick={resetModal} className="flex-1">
+                Cancel
+              </Button>
+              <Button
+                onClick={() => setPaymentStep("verification")}
+                className="flex-1 bg-orange-600 hover:bg-orange-700"
+              >
+                I've Sent the Money
+              </Button>
+            </div>
+          </div>
+        )}
 
-                  <div className="space-y-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="phone" className="flex items-center gap-2">
-                        <Phone className="h-4 w-4" />
-                        MTN Mobile Money Number
-                      </Label>
-                      <Input
-                        id="phone"
-                        placeholder="024 XXX XXXX"
-                        value={phoneNumber}
-                        onChange={(e) => setPhoneNumber(formatPhoneNumber(e.target.value))}
-                        maxLength={13}
-                        className="text-lg"
-                      />
-                      <p className="text-xs text-gray-500">
-                        Enter your MTN number (024, 054, 055, or 059). You'll receive a payment prompt on your phone.
-                      </p>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="email" className="flex items-center gap-2">
-                        <Mail className="h-4 w-4" />
-                        Email Address
-                      </Label>
-                      <Input
-                        id="email"
-                        type="email"
-                        placeholder="your@email.com"
-                        value={email}
-                        onChange={(e) => setEmail(e.target.value)}
-                        className="text-lg"
-                      />
-                      <p className="text-xs text-gray-500">
-                        We'll send your subscription confirmation and receipts here.
-                      </p>
-                    </div>
+        {paymentStep === "verification" && (
+          <div className="space-y-6">
+            <Card className="border-blue-200 bg-blue-50">
+              <CardHeader>
+                <CardTitle className="text-lg text-blue-800 flex items-center gap-2">
+                  <RefreshCw className="h-5 w-5" />
+                  Verifying Your Payment
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-center space-y-4">
+                  <div className="text-sm text-blue-700">
+                    <p>
+                      <strong>Amount:</strong> GHS {selectedPlan.price}
+                    </p>
+                    <p>
+                      <strong>Reference:</strong> {reference}
+                    </p>
+                    <p>
+                      <strong>From:</strong> {senderPhone}
+                    </p>
                   </div>
-                </div>
 
-                {error && (
-                  <Alert className="bg-red-50 border-red-200">
-                    <AlertDescription className="text-red-700">{error}</AlertDescription>
-                  </Alert>
-                )}
-
-                <div className="flex gap-3">
-                  <Button onClick={() => setStep("plans")} variant="outline" className="flex-1">
-                    Back to Plans
-                  </Button>
-                  <Button
-                    onClick={handleSubscribe}
-                    className="flex-1 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
-                    disabled={!phoneNumber || !email}
-                  >
-                    Pay GHS {selectedPlan.price} with MTN MoMo
-                  </Button>
-                </div>
-              </div>
-
-              <div className="space-y-6">
-                <div>
-                  <h3 className="text-lg font-semibold mb-4">What You Get</h3>
-                  <div className="space-y-3">
-                    {selectedPlan.features.slice(0, 5).map((feature, index) => (
-                      <div key={index} className="flex items-start gap-3">
-                        <Check className="h-4 w-4 text-green-500 flex-shrink-0 mt-0.5" />
-                        <span className="text-sm">{feature}</span>
-                      </div>
-                    ))}
-                    {selectedPlan.features.length > 5 && (
-                      <div className="text-sm text-gray-500">+{selectedPlan.features.length - 5} more features...</div>
+                  <div className="bg-white rounded-lg p-4 border border-blue-200">
+                    <p className="text-sm text-blue-800 mb-2">
+                      We're checking our system for your payment. This usually takes 1-2 minutes.
+                    </p>
+                    {verificationAttempts > 0 && (
+                      <p className="text-xs text-blue-600">Verification attempts: {verificationAttempts}</p>
                     )}
                   </div>
-                </div>
 
-                <Card className="bg-yellow-50 border-yellow-200">
-                  <CardContent className="p-4">
-                    <h4 className="font-semibold text-yellow-800 mb-2">Ghana-Specific Features</h4>
-                    <ul className="text-sm text-yellow-700 space-y-1">
-                      <li>• Harmattan season alerts</li>
-                      <li>• Dust storm early warnings</li>
-                      <li>• Local health recommendations</li>
-                      <li>• Support in English & Twi</li>
-                    </ul>
-                  </CardContent>
-                </Card>
-              </div>
+                  <Button
+                    onClick={handleVerifyPayment}
+                    disabled={isProcessing}
+                    className="w-full bg-blue-600 hover:bg-blue-700"
+                  >
+                    {isProcessing ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Checking Payment...
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw className="h-4 w-4 mr-2" />
+                        Check Payment Status
+                      </>
+                    )}
+                  </Button>
+
+                  {verificationAttempts >= 2 && (
+                    <Alert className="border-yellow-200 bg-yellow-50">
+                      <AlertTriangle className="h-4 w-4" />
+                      <AlertDescription className="text-sm">
+                        <strong>Payment not found yet?</strong>
+                        <ul className="mt-2 space-y-1">
+                          <li>• Ensure you sent exactly GHS {selectedPlan.price}</li>
+                          <li>• Check that you included the reference: {reference}</li>
+                          <li>• Wait 2-3 minutes for processing</li>
+                          <li>• Contact support if issues persist</li>
+                        </ul>
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            <div className="flex gap-3">
+              <Button variant="outline" onClick={() => setPaymentStep("transfer")} className="flex-1">
+                Back to Instructions
+              </Button>
+              <Button variant="outline" onClick={resetModal} className="flex-1">
+                Cancel Payment
+              </Button>
             </div>
           </div>
         )}
 
-        {step === "processing" && (
-          <div className="text-center space-y-6 py-12">
-            <div className="w-20 h-20 mx-auto">
-              <Loader2 className="h-20 w-20 animate-spin text-blue-600" />
+        {paymentStep === "success" && (
+          <div className="text-center py-8">
+            <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <CheckCircle className="h-8 w-8 text-green-600" />
             </div>
-            <div>
-              <h3 className="text-xl font-semibold mb-2">Processing Payment</h3>
-              <p className="text-gray-600 mb-4">
-                {paymentStatus === "pending"
-                  ? "Please check your phone and approve the MTN Mobile Money payment request"
-                  : "Initiating payment with MTN Mobile Money..."}
-              </p>
-              {transactionId && (
-                <div className="bg-gray-50 p-4 rounded-lg">
-                  <p className="text-xs text-gray-500 mb-1">Transaction ID:</p>
-                  <p className="font-mono text-sm">{transactionId}</p>
-                </div>
-              )}
-            </div>
-            <div className="max-w-md mx-auto">
-              <Alert>
-                <AlertDescription>
-                  <strong>Next Steps:</strong>
-                  <br />
-                  1. Check your phone for MTN MoMo prompt
-                  <br />
-                  2. Enter your MTN MoMo PIN
-                  <br />
-                  3. Confirm the payment
-                  <br />
-                  4. Wait for confirmation
-                </AlertDescription>
-              </Alert>
-            </div>
-          </div>
-        )}
-
-        {step === "success" && (
-          <div className="text-center space-y-6 py-12">
-            <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto">
-              <Check className="h-12 w-12 text-green-600" />
-            </div>
-            <div>
-              <h3 className="text-2xl font-bold text-green-800 mb-2">Payment Successful!</h3>
-              <p className="text-gray-600 mb-4">
-                Your {selectedPlan?.name} subscription is now active. Welcome to premium AeroHealth!
-              </p>
-              <div className="bg-green-50 p-6 rounded-lg max-w-md mx-auto">
-                <h4 className="font-semibold text-green-800 mb-3">What happens next:</h4>
-                <ul className="text-sm text-green-700 space-y-2 text-left">
-                  <li>✓ Premium features are now unlocked</li>
-                  <li>✓ You'll receive a confirmation email</li>
-                  <li>✓ Advanced alerts are now active</li>
-                  <li>✓ AI insights are available</li>
-                  <li>✓ Family sharing is ready to set up</li>
-                </ul>
-              </div>
-            </div>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Payment Successful!</h3>
+            <p className="text-gray-600 mb-4">
+              Your {selectedPlan.name} subscription is now active. You have full access to Ghana air quality maps!
+            </p>
+            <Badge className="bg-green-100 text-green-700 border-green-300">Subscription Active</Badge>
           </div>
         )}
       </DialogContent>
