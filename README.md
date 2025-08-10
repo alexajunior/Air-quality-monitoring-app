@@ -1,12 +1,12 @@
 
-## Overview
+## OVERVIEW 
 
- AeroHealth – Real-Time Air Quality Monitoring for a Healthier Future 🌍💨
+ AeroHealth – Real-Time Air Quality Monitoring for a Healthier Future 🌍
 
 AeroHealth is a powered web application that delivers real-time air quality insights to communities, health organizations, and policymakers.
 It empowers users to make informed decisions and take action against air pollution.
 
-Key Features
+KEY FEATURES 
 
 📡 Live Air Quality Index (AQI) tracking by location
 
@@ -21,7 +21,7 @@ Key Features
 🧠 AI-powered health recommendations based on air quality data
 
 
-Tech Stack
+TECH STACK
 
 Frontend: React.js (TypeScript) / Tailwind CSS
 
@@ -31,5 +31,5 @@ Database: MongoDB
 
 APIs: OpenWeather & AQI APIs
 
-Website : www.aerohealthapp.vercel.app
+Visit the Website : www.aerohealthapp.vercel.app
 
