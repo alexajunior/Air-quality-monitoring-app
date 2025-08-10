@@ -1,10 +1,35 @@
-# New Project
-
-*Automatically synced with your [v0.dev](https://v0.dev) deployments*
-
-[![Deployed on Vercel](https://img.shields.io/badge/Deployed%20on-Vercel-black?style=for-the-badge&logo=vercel)](https://vercel.com/alex-s-projects-b818a7c0/v0-new-project-vzwdilqdful)
-[![Built with v0](https://img.shields.io/badge/Built%20with-v0.dev-black?style=for-the-badge)](https://v0.dev/chat/projects/vzWdiLQdFuL)
 
 ## Overview
 
- This is a web application. 
+ AeroHealth – Real-Time Air Quality Monitoring for a Healthier Future 🌍💨
+
+AeroHealth is a powered web application that delivers real-time air quality insights to communities, health organizations, and policymakers.
+It empowers users to make informed decisions and take action against air pollution.
+
+Key Features
+
+📡 Live Air Quality Index (AQI) tracking by location
+
+📊 Interactive dashboards for pollution trends
+
+📍 Geo-mapping of high-risk areas
+
+📱 Mobile-friendly, responsive design
+
+🔔 Custom alerts for unsafe air conditions
+
+🧠 AI-powered health recommendations based on air quality data
+
+
+Tech Stack
+
+Frontend: React.js (TypeScript) / Tailwind CSS
+
+Backend: Node.js (TypeScript) / Express.js
+
+Database: MongoDB
+
+APIs: OpenWeather & AQI APIs
+
+Website : www.aerohealthapp.vercel.app
+
