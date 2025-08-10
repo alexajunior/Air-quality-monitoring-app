@@ -21,6 +21,7 @@ KEY FEATURES
 🧠 AI-powered health recommendations based on air quality data
 
 
+
 TECH STACK
 
 Frontend: React.js (TypeScript) / Tailwind CSS
@@ -31,5 +32,5 @@ Database: MongoDB
 
 APIs: OpenWeather & AQI APIs
 
-Visit the Website : www.aerohealthapp.vercel.app
+Visit the Website : https://www.aerohealthapp.vercel.app
 
