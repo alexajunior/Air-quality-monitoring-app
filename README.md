@@ -32,5 +32,6 @@ Database: MongoDB
 
 APIs: OpenWeather & AQI APIs
 
-Visit the Website : aerohealthapp.vercel.app
+Visit the Website : 
+www.aerohealth.vercel.app
 
