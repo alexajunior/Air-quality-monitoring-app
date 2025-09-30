@@ -1,13 +1,29 @@
 {
-  "name": "my-v0-project",
-  "version": "0.1.0",
+  "name": "air-quality-monitoring-app",
+  "version": "1.0.0",
+  "description": "A TypeScript-based air quality monitoring application with real-time tracking capabilities",
   "private": true,
   "scripts": {
     "build": "next build",
     "dev": "next dev",
     "lint": "next lint",
-    "start": "next start"
+    "start": "next start",
+    "test": "echo \"No tests specified yet\" && exit 0",
+    "type-check": "tsc --noEmit"
   },
+  "keywords": [
+    "air-quality",
+    "monitoring",
+    "typescript",
+    "environmental",
+    "real-time",
+    "health",
+    "aqi",
+    "next.js",
+    "react"
+  ],
+  "author": "Alex Junior <alexjuniorantwi1@gmail.com>",
+  "license": "MIT",
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",
     "@radix-ui/react-accordion": "1.2.2",
@@ -67,5 +83,13 @@
     "postcss": "^8.5",
     "tailwindcss": "^3.4.17",
     "typescript": "^5"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alexajunior/Air-quality-monitoring-app.git"
+  },
+  "bugs": {
+    "url": "https://github.com/alexajunior/Air-quality-monitoring-app/issues"
+  },
+  "homepage": "https://github.com/alexajunior/Air-quality-monitoring-app#readme"
 }
