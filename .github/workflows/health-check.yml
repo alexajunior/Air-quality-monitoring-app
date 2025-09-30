@@ -19,13 +19,11 @@ jobs:
         cache: 'npm'
     
     - name: Install dependencies
-      run: npm ci
+      run: npm ci || npm install
     
     - name: Run health checks
       run: |
         echo "Running application health checks..."
-        npm run build
-        echo "Build successful!"
         
         # Check if critical files exist
         if [ ! -f "package.json" ]; then
@@ -38,13 +36,24 @@ jobs:
           exit 1
         fi
         
-        echo "✅ Health check passed!"
+        echo "✅ Critical files check passed!"
+        
+        # Try to build the project
+        npm run build
+        echo "✅ Build successful!"
+        
+        echo "✅ Health check completed successfully!"
     
-    - name: Test API endpoints (if applicable)
+    - name: Test application components
       run: |
         echo "Testing critical functionality..."
-        # Add specific health checks for your air quality monitoring features
-        echo "✅ API health check completed"
+        # Run type checking if available
+        npm run type-check || echo "Type checking not available, skipping..."
+        
+        # Run tests
+        npm test
+        
+        echo "✅ Component tests completed!"
     
     - name: Create issue on failure
       if: failure()
